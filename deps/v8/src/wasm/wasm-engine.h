@@ -224,8 +224,8 @@ class V8_EXPORT_PRIVATE WasmEngine {
   // Compiles the function with the given index at a specific compilation tier.
   // Errors are stored internally in the CompilationState.
   // This is mostly used for testing to force a function into a specific tier.
-  void CompileFunction(Counters* counters, NativeModule* native_module,
-                       uint32_t function_index, ExecutionTier tier);
+  void CompileFunction(NativeModule* native_module, uint32_t function_index,
+                       ExecutionTier tier);
 
   void EnterDebuggingForIsolate(Isolate* isolate);
 
@@ -237,9 +237,8 @@ class V8_EXPORT_PRIVATE WasmEngine {
       Isolate* isolate, std::shared_ptr<NativeModule> shared_module,
       base::Vector<const char> source_url);
 
-  // Flushes all Liftoff code and returns the sizes of the removed
-  // (executable) code and the removed metadata.
-  std::pair<size_t, size_t> FlushLiftoffCode();
+  // Flushes all Liftoff code in all NativeModules.
+  void FlushLiftoffCode();
 
   // Returns the code size of all Liftoff compiled functions in all modules.
   size_t GetLiftoffCodeSizeForTesting();
@@ -299,17 +298,29 @@ class V8_EXPORT_PRIVATE WasmEngine {
   // outstanding code objects (added via {LogCode}).
   void LogOutstandingCodesForIsolate(Isolate*);
 
-  // Create a new NativeModule. The caller is responsible for its
-  // lifetime. The native module will be given some memory for code,
-  // which will be page size aligned. The size of the initial memory
-  // is determined by {code_size_estimate}. The native module may later request
-  // more memory.
-  // TODO(wasm): isolate is only required here for CompilationState.
+  // Create a new NativeModule and register it for usage in `isolate`.
+  // The caller is responsible for its lifetime. The native module will be given
+  // some memory for code, which will be page size aligned. The size of the
+  // initial memory is determined by {code_size_estimate}. The native module may
+  // later request more memory.
   std::shared_ptr<NativeModule> NewNativeModule(
       Isolate* isolate, WasmEnabledFeatures enabled_features,
       WasmDetectedFeatures detected_features,
       CompileTimeImports compile_imports,
       std::shared_ptr<const WasmModule> module, size_t code_size_estimate);
+
+  // Create a new unowned NativeModule (not belonging to any isolate yet).
+  // Add it to an isolate later via `UseNativeModuleInIsolate`.
+  std::shared_ptr<NativeModule> NewUnownedNativeModule(
+      WasmEnabledFeatures enabled_features,
+      WasmDetectedFeatures detected_features,
+      CompileTimeImports compile_imports,
+      std::shared_ptr<const WasmModule> module, size_t code_size_estimate);
+
+  // Register a `NativeModule` with an isolate. This makes sure that the
+  // module's code is logged in the isolate, and the isolate's stack is scanned
+  // for code GC in that module.
+  void UseNativeModuleInIsolate(NativeModule*, Isolate*);
 
   // Try getting a cached {NativeModule}, or get ownership for its creation.
   // Return {nullptr} if no {NativeModule} exists for these bytes. In this case,
@@ -394,9 +405,11 @@ class V8_EXPORT_PRIVATE WasmEngine {
 
   void DecodeAllNameSections(CanonicalTypeNamesProvider* target);
 
+#ifdef V8_ENABLE_TURBOFAN
   compiler::WasmCallDescriptors* call_descriptors() {
     return &call_descriptors_;
   }
+#endif
 
   // Returns an approximation of current off-heap memory used by this engine,
   // excluding code space.
@@ -493,7 +506,9 @@ class V8_EXPORT_PRIVATE WasmEngine {
 
   TypeCanonicalizer type_canonicalizer_;
 
+#ifdef V8_ENABLE_TURBOFAN
   compiler::WasmCallDescriptors call_descriptors_;
+#endif
 
   // This mutex protects all information which is mutated concurrently or
   // fields that are initialized lazily on the first access.
